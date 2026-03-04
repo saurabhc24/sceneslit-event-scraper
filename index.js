@@ -75,13 +75,11 @@ app.post("/scrape", async (req, res) => {
   try {
     const district = await scrapeDistrict();
     const bms = await scrapeBookMyShow();
-    const scenes = await scrapeScenes();
 
     const events = [...district, ...bms];
 
     console.log("District:", district.length);
     console.log("BMS:", bms.length);
-    console.log("Scenes:", scenes.length);
     
     for (const event of events) {
       await supabase.from("events").upsert({
