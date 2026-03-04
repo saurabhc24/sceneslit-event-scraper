@@ -12,30 +12,31 @@ const supabase = createClient(
 
 async function scrapeDistrict() {
   const browser = await chromium.launch({
-  headless: true,
-  args: [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage"
-  ]
-});
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+
   const page = await browser.newPage();
 
-  await page.goto("https://district.in/events");
+  await page.goto("https://district.in/events", {
+    waitUntil: "networkidle"
+  });
 
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(6000);
 
   const events = await page.evaluate(() => {
-    const cards = document.querySelectorAll("a");
+    const cards = document.querySelectorAll('[data-testid="event-card"]');
 
-    return Array.from(cards)
-      .filter(a => a.href.includes("/event/"))
-      .slice(0, 20)
-      .map(a => ({
-        title: a.innerText.trim(),
-        source_url: a.href,
+    return Array.from(cards).map(card => {
+      const title = card.querySelector("h3")?.innerText || "";
+      const link = card.querySelector("a")?.href || "";
+
+      return {
+        title,
+        source_url: link,
         source_platform: "district"
-      }));
+      };
+    });
   });
 
   await browser.close();
@@ -43,24 +44,27 @@ async function scrapeDistrict() {
 }
 
 async function scrapeBookMyShow() {
-  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox"]
+  });
+
   const page = await browser.newPage();
 
-  await page.goto("https://in.bookmyshow.com/explore/events-bengaluru");
+  await page.goto("https://in.bookmyshow.com/explore/events-bengaluru", {
+    waitUntil: "networkidle"
+  });
 
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(6000);
 
   const events = await page.evaluate(() => {
-    const links = document.querySelectorAll("a");
+    const cards = document.querySelectorAll("a[href*='/events/']");
 
-    return Array.from(links)
-      .filter(a => a.href.includes("/events/"))
-      .slice(0, 20)
-      .map(a => ({
-        title: a.innerText.trim(),
-        source_url: a.href,
-        source_platform: "bookmyshow"
-      }));
+    return Array.from(cards).slice(0, 20).map(card => ({
+      title: card.innerText.trim(),
+      source_url: card.href,
+      source_platform: "bookmyshow"
+    }));
   });
 
   await browser.close();
@@ -69,13 +73,16 @@ async function scrapeBookMyShow() {
 
 app.post("/scrape", async (req, res) => {
   try {
-    const [district, bms] = await Promise.all([
-      scrapeDistrict(),
-      scrapeBookMyShow(),
-    ]);
+    const district = await scrapeDistrict();
+    const bms = await scrapeBookMyShow();
+    const scenes = await scrapeScenes();
 
     const events = [...district, ...bms];
 
+    console.log("District:", district.length);
+    console.log("BMS:", bms.length);
+    console.log("Scenes:", scenes.length);
+    
     for (const event of events) {
       await supabase.from("events").upsert({
         title: event.title,
