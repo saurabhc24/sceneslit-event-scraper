@@ -1,42 +1,86 @@
 import express from "express";
-import axios from "axios";
+import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 app.use(express.json());
 
-// 🔐 Put these in Render ENV variables later
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE
+);
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+async function scrapeDistrict() {
+  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  const page = await browser.newPage();
 
-// 🔥 Main scrape route
+  await page.goto("https://district.in/events");
+
+  await page.waitForTimeout(5000);
+
+  const events = await page.evaluate(() => {
+    const cards = document.querySelectorAll("a");
+
+    return Array.from(cards)
+      .filter(a => a.href.includes("/event/"))
+      .slice(0, 20)
+      .map(a => ({
+        title: a.innerText.trim(),
+        source_url: a.href,
+        source_platform: "district"
+      }));
+  });
+
+  await browser.close();
+  return events;
+}
+
+async function scrapeBookMyShow() {
+  const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  const page = await browser.newPage();
+
+  await page.goto("https://in.bookmyshow.com/explore/events-bengaluru");
+
+  await page.waitForTimeout(5000);
+
+  const events = await page.evaluate(() => {
+    const links = document.querySelectorAll("a");
+
+    return Array.from(links)
+      .filter(a => a.href.includes("/events/"))
+      .slice(0, 20)
+      .map(a => ({
+        title: a.innerText.trim(),
+        source_url: a.href,
+        source_platform: "bookmyshow"
+      }));
+  });
+
+  await browser.close();
+  return events;
+}
+
 app.post("/scrape", async (req, res) => {
-  const city = req.body.city || "Bengaluru";
-
   try {
-    // Example test event (replace later with real scraping)
-    const testEvent = {
-      title: "Test Techno Night",
-      description: "Automated insert test",
-      city: city,
-      start_datetime: new Date().toISOString(),
-      price_min: 499,
-      source_platform: "test_scraper",
-      source_url: "https://example.com"
-    };
+    const [district, bms] = await Promise.all([
+      scrapeDistrict(),
+      scrapeBookMyShow(),
+    ]);
 
-    const { error } = await supabase
-      .from("events")
-      .insert([testEvent]);
+    const events = [...district, ...bms];
 
-    if (error) throw error;
+    for (const event of events) {
+      await supabase.from("events").upsert({
+        title: event.title,
+        city: "Bengaluru",
+        start_datetime: new Date().toISOString(),
+        source_platform: event.source_platform,
+        source_url: event.source_url
+      }, { onConflict: "source_url" });
+    }
 
     res.json({
-      city,
-      inserted: 1,
-      message: "Success"
+      scraped: events.length
     });
 
   } catch (err) {
@@ -45,5 +89,5 @@ app.post("/scrape", async (req, res) => {
 });
 
 app.listen(3000, () => {
-  console.log("Scraper running on port 3000");
+  console.log("Scraper running");
 });
