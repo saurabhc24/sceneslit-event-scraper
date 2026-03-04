@@ -12,6 +12,7 @@ const supabase = createClient(
 
 async function scrapeDistrict() {
   const browser = await chromium.launch({
+  headless: true,
   args: [
     "--no-sandbox",
     "--disable-setuid-sandbox",
